@@ -1,0 +1,112 @@
+// Change tmp path -
+
+private function validateBase64Image($string) {
+
+        if (!preg_match('/data:([^;]*);base64,(.*)/', $string, $matches)) {
+            return("File is not supported");
+        }
+        
+        $base64Image = $matches[2];
+        
+        $uri = 'data://application/octet-stream;base64,' . $base64Image;
+        $filename = sha1_file($uri) . '_' . time();
+        
+        $image = getimagesize($uri);
+
+        // if base64 encoded image
+        if (false === $ext = $this->recursive_array_search($image['mime'], $this->extension)) {
+            return "File extension is not supported.";
+        }
+
+        //$data = base64_decode($base64Image, true);
+        file_put_contents($this->get('kernel')->getRootDir() . '/../web/tmp/' . $filename . '.' . $ext, base64_decode($base64Image));
+        return array(true, 'file' => $filename, 'ext' => $ext);
+    }
+
+    // Validate file
+    // true if file is correct - return message if there is an error
+    private function validateFile($file) {
+        
+        // If it's a base64 image
+        if (!is_array($file)) {
+            return $this->validateBase64Image($file);
+        }
+        
+        // Verify if file exist has no error during the upload
+        if ($file['size'] == 0 OR $file['error'] != 0) {
+            return "Please try again. The file is corrupted.";
+        }
+
+        //type
+        $finfo = new \finfo(FILEINFO_MIME_TYPE);
+        $filename = sha1_file($file['tmp_name']) . '_' . time();
+
+        //4MB
+        if ($file['size'] > 4200000) {
+            return "Exceeded filesize limit of 4Mb.";
+        }
+
+        // Normal file, not compressed using javascript
+        // don't trust filetype
+        if (false === $ext = $this->recursive_array_search($finfo->file($file['tmp_name']), $this->extension)) {
+            return "File extension is not supported.";
+        }
+
+        if (!move_uploaded_file($file['tmp_name'], sprintf($this->get('kernel')->getRootDir() . '/../web/tmp/%s', $filename . '.' . $ext))) {
+            return "Failed to move uploaded file.";
+        }
+
+        return array(true, 'file' => $filename, 'ext' => $ext);
+    }
+
+    protected function recursive_array_search($needle, array $haystack) {
+        foreach ($haystack as $key => $value) {
+            $current_key = $key;
+            if ($needle === $value OR ( is_array($value) && $this->recursive_array_search($needle, $value) !== false)) {
+                return $current_key;
+            }
+        }
+        return false;
+    }
+
+    protected function CurlSendPostRequest($request, $url = "") {
+        $error_message = "";
+        $headers = array(
+            'Content-Type: multipart/form-data',
+            'Authorization: Bearer ' . $this->jwt
+        );
+
+        $ch = curl_init($url);
+        $options = array(
+            CURLOPT_RETURNTRANSFER => true, // return web page
+            CURLOPT_HEADER => true, // return headers
+            CURLOPT_POST => 1, // i am sending post data
+            CURLOPT_POSTFIELDS => $request, // this are my post vars
+            CURLOPT_SSL_VERIFYHOST => 0, // don't verify ssl
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SAFE_UPLOAD => false,
+            CURLOPT_VERBOSE => 1,
+            CURLOPT_HTTPHEADER => $headers
+        );
+
+        curl_setopt_array($ch, $options);
+        $response = curl_exec($ch);
+        $header_size = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+        $header = substr($response, 0, $header_size);
+        $body = substr($response, $header_size);
+        $httpResponse = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+        // Check for errors and display the error message
+        if ($errno = curl_errno($ch)) {
+            $error_message = curl_strerror($errno);
+        }
+
+        curl_close($ch);
+        return array(
+            'header' => $header,
+            'body' => $body,
+            'response' => $response,
+            'error' => $error_message,
+            'httpResponse' => $httpResponse
+        );
+    }
